@@ -1597,11 +1597,11 @@ function AACS.ClientEveryHours()
 end
 
 function AACS.AfterGameStart()
-    Events.OnServerCommand.Add(AACS.OnServerCommand)
-
     -- Avoid duplicate registrations (some hosted setups reload UI scripts)
     if AACS._loginEventsAdded then return end
     AACS._loginEventsAdded = true
+
+    Events.OnServerCommand.Add(AACS.OnServerCommand)
 
     if isClient() then
         Events.OnTick.Add(AACS._sendLoginPingOnce)
