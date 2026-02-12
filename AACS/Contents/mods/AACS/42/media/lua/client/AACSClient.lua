@@ -1095,8 +1095,22 @@ local function _getAllAnimalsFromContext(context, worldObjects, playerObj)
     -- We use proxies because we can't reliably match multiple animals from worldObjects
     for _, menuName in ipairs(menuNames) do
         local sq = _getClickSquareFromWorldObjects(worldObjects)
+        local x, y, z
         if sq then
-            local animal = { __aacsProxy = true, x = sq:getX(), y = sq:getY(), z = sq:getZ(), menuName = menuName }
+            x, y, z = sq:getX(), sq:getY(), sq:getZ()
+        else
+            -- B42 sometimes does not provide a world object square for animal-hover menus.
+            -- Fallback to current mouse square so the adopt option still appears in the animal submenu.
+            if getMouseSquare then
+                local msq = getMouseSquare()
+                if msq then
+                    x, y, z = msq:getX(), msq:getY(), msq:getZ()
+                end
+            end
+        end
+
+        if x and y and z then
+            local animal = { __aacsProxy = true, x = x, y = y, z = z, menuName = menuName }
             table.insert(result, { animal = animal, menuName = menuName })
         end
     end
@@ -1339,28 +1353,22 @@ function AACS.OnFillWorldObjectContextMenu(player, context, worldObjects, test)
             goto continue
         end
 
-        -- Get the submenu using context:getSubMenu(number)
+        -- Robust submenu resolution for B42 variations
         local subRef = animalMenuOpt.subMenu or animalMenuOpt.subOption
         AACS.Log("[OnFillMenu] subRef = " .. tostring(subRef) .. ", tipo: " .. tostring(type(subRef)))
 
-        local sub = nil
+        local sub = _getOrCreateSubMenu(context, animalMenuOpt)
 
-        if subRef and type(subRef) == "number" then
-            -- subRef é um índice, usa context:getSubMenu(índice)
+        -- Extra fallback for builds where subOption is a numeric index only
+        if (not sub) and subRef and type(subRef) == "number" then
             if context and context.getSubMenu then
                 sub = context:getSubMenu(subRef)
-                AACS.Log("[OnFillMenu] Tentou context:getSubMenu(" .. subRef .. "), resultado: " .. tostring(sub ~= nil))
+                AACS.Log("[OnFillMenu] Fallback context:getSubMenu(" .. subRef .. "), resultado: " .. tostring(sub ~= nil))
             end
-
-            -- Fallback: tenta instanceMap diretamente
             if not sub and context and context.instanceMap then
                 sub = context.instanceMap[subRef]
-                AACS.Log("[OnFillMenu] Tentou context.instanceMap[" .. subRef .. "], resultado: " .. tostring(sub ~= nil))
+                AACS.Log("[OnFillMenu] Fallback context.instanceMap[" .. subRef .. "], resultado: " .. tostring(sub ~= nil))
             end
-        elseif subRef and type(subRef) == "table" then
-            -- subRef já é o submenu
-            sub = subRef
-            AACS.Log("[OnFillMenu] subRef já era uma tabela, usando diretamente")
         end
 
         if not sub then
