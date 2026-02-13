@@ -1328,68 +1328,90 @@ function AACS.OnFillWorldObjectContextMenu(player, context, worldObjects, test)
 
     AACS.Log("[OnFillMenu] ===== INÍCIO OnFillWorldObjectContextMenu =====")
 
-    -- NEW APPROACH: Process ALL animals in the context menu
-    local animals = _getAllAnimalsFromContext(context, worldObjects, playerObj)
-    AACS.Log("[OnFillMenu] Número de animais detectados: " .. #animals)
+    -- Only show adoption when an actual animal is in the click context.
+    -- Prefer a real object reference; if vanilla doesn't expose the object,
+    -- fall back to a safe "menu-name + click square" proxy.
+    local animal = _getAnimalFromWorldObjects(worldObjects, playerObj)
+    AACS.Log("[OnFillMenu] animal de worldObjects: " .. tostring(animal ~= nil))
 
-    if #animals == 0 then
+    if not animal then
+        animal = _getAnimalFromContextMenu(context)
+        AACS.Log("[OnFillMenu] animal de contextMenu: " .. tostring(animal ~= nil))
+    end
+    if not animal then
+        animal = _getAnimalByMenuName(context, worldObjects)
+        AACS.Log("[OnFillMenu] animal de menuName: " .. tostring(animal ~= nil))
+    end
+    if not animal then
+        local menuName = _getMenuAnimalName(context)
+        AACS.Log("[OnFillMenu] menuName encontrado: " .. tostring(menuName))
+        if menuName then
+            local sq = _getClickSquareFromWorldObjects(worldObjects)
+            if sq then
+                animal = { __aacsProxy = true, x = sq:getX(), y = sq:getY(), z = sq:getZ(), menuName = menuName }
+                AACS.Log("[OnFillMenu] Criado animal proxy para: " .. menuName)
+            end
+        end
+    end
+
+    if not animal then
         AACS.Log("[OnFillMenu] NENHUM ANIMAL ENCONTRADO - saindo")
         return
     end
 
-    -- Process each animal separately
-    for _, animalData in ipairs(animals) do
-        local animal = animalData.animal
-        local menuName = animalData.menuName
+    AACS.Log("[OnFillMenu] Animal detectado, tipo: " .. (animal.__aacsProxy and "proxy" or "direto"))
 
-        AACS.Log("[OnFillMenu] ===== Processando animal: " .. tostring(menuName) .. " =====")
+    local menuName = animal.menuName or _getAnimalDisplayName(animal) or _getMenuAnimalName(context)
+    local animalMenuOpt = nil
 
-        -- Find the submenu for THIS SPECIFIC animal by its menuName
-        local animalMenuOpt = _findMenuOptionByName(context, menuName)
-        AACS.Log("[OnFillMenu] Procurando submenu por nome: " .. tostring(menuName) .. " - Encontrado: " .. tostring(animalMenuOpt ~= nil))
-
-        if not animalMenuOpt then
-            AACS.Log("[OnFillMenu] AVISO: Submenu não encontrado para " .. menuName .. " - pulando este animal")
-            goto continue
+    if animal.__aacsProxy and menuName then
+        animalMenuOpt = _findMenuOptionByName(context, menuName)
+    else
+        animalMenuOpt = _findAnimalMenuOption(context, animal)
+        if (not animalMenuOpt) and menuName then
+            animalMenuOpt = _findMenuOptionByName(context, menuName)
         end
+    end
 
-        -- Robust submenu resolution for B42 variations
-        local subRef = animalMenuOpt.subMenu or animalMenuOpt.subOption
-        AACS.Log("[OnFillMenu] subRef = " .. tostring(subRef) .. ", tipo: " .. tostring(type(subRef)))
+    if not animalMenuOpt then
+        AACS.Log("[OnFillMenu] AVISO: submenu do animal não encontrado")
+        return
+    end
 
-        local sub = _getOrCreateSubMenu(context, animalMenuOpt)
+    local subRef = animalMenuOpt.subMenu or animalMenuOpt.subOption
+    AACS.Log("[OnFillMenu] subRef = " .. tostring(subRef) .. ", tipo: " .. tostring(type(subRef)))
 
-        -- Extra fallback for builds where subOption is a numeric index only
-        if (not sub) and subRef and type(subRef) == "number" then
-            if context and context.getSubMenu then
-                sub = context:getSubMenu(subRef)
-                AACS.Log("[OnFillMenu] Fallback context:getSubMenu(" .. subRef .. "), resultado: " .. tostring(sub ~= nil))
-            end
-            if not sub and context and context.instanceMap then
-                sub = context.instanceMap[subRef]
-                AACS.Log("[OnFillMenu] Fallback context.instanceMap[" .. subRef .. "], resultado: " .. tostring(sub ~= nil))
-            end
+    local sub = _getOrCreateSubMenu(context, animalMenuOpt)
+
+    -- Extra fallback for builds where subOption is a numeric index only
+    if (not sub) and subRef and type(subRef) == "number" then
+        if context and context.getSubMenu then
+            sub = context:getSubMenu(subRef)
+            AACS.Log("[OnFillMenu] Fallback context:getSubMenu(" .. subRef .. "), resultado: " .. tostring(sub ~= nil))
         end
-
-        if not sub then
-            AACS.Log("[OnFillMenu] AVISO: Submenu não obtido para " .. menuName .. " - pulando este animal")
-            goto continue
+        if not sub and context and context.instanceMap then
+            sub = context.instanceMap[subRef]
+            AACS.Log("[OnFillMenu] Fallback context.instanceMap[" .. subRef .. "], resultado: " .. tostring(sub ~= nil))
         end
+    end
 
-        AACS.Log("[OnFillMenu] Submenu obtido com sucesso para: " .. menuName)
+    if not sub then
+        AACS.Log("[OnFillMenu] AVISO: Submenu não obtido")
+        return
+    end
 
-        local username = playerObj:getUsername()
-        local isAdmin = _isAdmin(playerObj)
+    local username = playerObj:getUsername()
+    local isAdmin = _isAdmin(playerObj)
 
-        _pingAnimal(animal)
+    _pingAnimal(animal)
 
-        local uid = AACS.GetAnimalUID(animal)
-        local owner = AACS.GetAnimalOwner(animal)
+    local uid = AACS.GetAnimalUID(animal)
+    local owner = AACS.GetAnimalOwner(animal)
 
-        if uid then
-            owner = owner or "?"
+    if uid then
+        owner = owner or "?"
 
-            AACS.Log("[OnFillMenu] Animal já adotado - UID: " .. uid .. ", Owner: " .. owner)
+        AACS.Log("[OnFillMenu] Animal já adotado - UID: " .. uid .. ", Owner: " .. owner)
 
         -- Always show simple owner line + disabled adopt (red) when already registered
         local infoOpt = sub:addOption(getText("ContextMenu_AACS_OwnedBy", owner), worldObjects, nil)
@@ -1399,21 +1421,17 @@ function AACS.OnFillWorldObjectContextMenu(player, context, worldObjects, test)
         if adoptOpt then adoptOpt.notAvailable = true end
 
         -- Owner or admin can still manage/remove adoption
-        -- Adiciona as opções de gerenciamento no submenu do animal específico
         if owner == username or isAdmin then
             AACS.Log("[OnFillMenu] Adicionando opções de gerenciamento - Username: " .. username .. ", isAdmin: " .. tostring(isAdmin))
             sub:addOption(getText("ContextMenu_AACS_ManageThisAnimal"), worldObjects, _openUserManager, nil)
             sub:addOption(getText("ContextMenu_AACS_UnadoptAnimal"), nil, _unadoptByUID, uid)
         end
 
-        -- [FIX-1] Disable vanilla animal submenu options for unauthorized players.
-        -- The vanilla context menu creates a submenu under the animal's display name
-        -- with options like "Laçar Animal", "Pegar <name>", "Matar Animal".
-        -- We find that submenu and mark restricted options as notAvailable.
+        -- Disable vanilla animal submenu options for unauthorized players.
         local canPickup = (owner == username) or isAdmin
         local canLeash  = (owner == username) or isAdmin
         local canKill   = (owner == username) or isAdmin
-        
+
         -- Check detailed permissions from modData/cache
         if not canPickup and animal and (not animal.__aacsProxy) then
             canPickup = AACS.CanPlayerDo(playerObj, animal, "pickup")
@@ -1428,136 +1446,128 @@ function AACS.OnFillWorldObjectContextMenu(player, context, worldObjects, test)
         if (not canPickup or not canLeash or not canKill) then
             local cacheEntry = nil
             for _, e in ipairs(AACS.ClientCache.myEntries or {}) do
-                if e.UID == uid then cacheEntry = e; break end
-            end
-            if not cacheEntry then
-                for _, e in ipairs(AACS.ClientCache.interactEntries or {}) do
-                    if e.UID == uid then cacheEntry = e; break end
+                if e and e.uid == uid then
+                    cacheEntry = e
+                    break
                 end
             end
             if cacheEntry then
-                if _canInteractEntry(cacheEntry) then
-                    -- Player has some level of interaction permission
-                    canPickup = canPickup or _entryModeAllows(cacheEntry.Owner, username, tonumber(cacheEntry.PickupMode) or 1)
-                                         or _entryAllowListContains(cacheEntry, username)
-                    canLeash  = canLeash  or _entryModeAllows(cacheEntry.Owner, username, tonumber(cacheEntry.LeashMode) or 1)
-                                         or _entryAllowListContains(cacheEntry, username)
-                    canKill   = canKill or canPickup
-                end
+                if not canPickup then canPickup = cacheEntry.canPickup == true end
+                if not canLeash  then canLeash  = cacheEntry.canLeash  == true end
+                if not canKill   then canKill   = cacheEntry.canPickup == true end
             end
         end
 
-        -- Now scan the context menu for the vanilla animal submenu and disable options
-        local animalMenuOptPerms = animalMenuOpt or _findAnimalMenuOption(context, animal)
-        if animalMenuOptPerms then
-            local subPerms = sub or _getOrCreateSubMenu(context, animalMenuOptPerms)
-            if subPerms and subPerms.options then
-                -- Keywords for each action (EN + PTBR + common variations)
-                local leashKeys = { "leash", "lasso", "laçar", "lacar", "rope", "attach", "amarrar", "tie" }
-                local pickupKeys = { "pickup", "pick up", "pegar", "carry", "grab", "carregar" }
-                local killKeys = { "kill", "slaughter", "matar", "abater" }
-                
-                local function matchesAny(name, keywords)
-                    local n = _normName(name)
-                    if not n then return false end
-                    for _, kw in ipairs(keywords) do
-                        if n:find(kw, 1, true) then return true end
+        if not (canPickup and canLeash and canKill) then
+            local animalMenuOptPerms = _findAnimalMenuOption(context, animal)
+            if (not animalMenuOptPerms) and menuName then
+                animalMenuOptPerms = _findMenuOptionByName(context, menuName)
+            end
+            if animalMenuOptPerms then
+                local subPerms = sub or _getOrCreateSubMenu(context, animalMenuOptPerms)
+                if subPerms and subPerms.options then
+                    -- Keywords for each action (EN + PTBR + common variations)
+                    local leashKeys = { "leash", "lasso", "laçar", "lacar", "rope", "attach", "amarrar", "tie" }
+                    local pickupKeys = { "pickup", "pick up", "pegar", "carry", "grab", "carregar" }
+                    local killKeys = { "kill", "slaughter", "matar", "abater" }
+
+                    local function matchesAny(name, keywords)
+                        local n = _normName(name)
+                        if not n then return false end
+                        for _, kw in ipairs(keywords) do
+                            if n:find(kw, 1, true) then return true end
+                        end
+                        return false
                     end
-                    return false
+
+                    _iterList(subPerms.options, function(opt)
+                        if not opt or not opt.name then return end
+
+                        if not canLeash and matchesAny(opt.name, leashKeys) then
+                            opt.notAvailable = true
+                            opt.toolTip = getText("IGUI_AACS_Notify_Protected", owner, uid)
+                            AACS.Log("[OnFillMenu] Disabled leash option: " .. tostring(opt.name))
+                        end
+
+                        if not canPickup and matchesAny(opt.name, pickupKeys) then
+                            opt.notAvailable = true
+                            opt.toolTip = getText("IGUI_AACS_Notify_Protected", owner, uid)
+                            AACS.Log("[OnFillMenu] Disabled pickup option: " .. tostring(opt.name))
+                        end
+
+                        if not canKill and matchesAny(opt.name, killKeys) then
+                            opt.notAvailable = true
+                            opt.toolTip = getText("IGUI_AACS_Notify_Protected", owner, uid)
+                            AACS.Log("[OnFillMenu] Disabled kill option: " .. tostring(opt.name))
+                        end
+                    end)
                 end
-                
-                _iterList(subPerms.options, function(opt)
-                    if not opt or not opt.name then return end
-                    
-                    if not canLeash and matchesAny(opt.name, leashKeys) then
-                        opt.notAvailable = true
-                        opt.toolTip = getText("IGUI_AACS_Notify_Protected", owner, uid)
-                        AACS.Log("[OnFillMenu] Disabled leash option: " .. tostring(opt.name))
-                    end
-                    
-                    if not canPickup and matchesAny(opt.name, pickupKeys) then
-                        opt.notAvailable = true
-                        opt.toolTip = getText("IGUI_AACS_Notify_Protected", owner, uid)
-                        AACS.Log("[OnFillMenu] Disabled pickup option: " .. tostring(opt.name))
-                    end
-                    
-                    if not canKill and matchesAny(opt.name, killKeys) then
-                        opt.notAvailable = true
-                        opt.toolTip = getText("IGUI_AACS_Notify_Protected", owner, uid)
-                        AACS.Log("[OnFillMenu] Disabled kill option: " .. tostring(opt.name))
-                    end
-                end)
+            end
+        end
+    else
+        -- No owner/UID => allow adopt (with new requirement checks)
+        local canAdopt = true
+        local blockReason = nil
+
+        -- Check adoption limit (client hint)
+        local maxAnimals = AACS.GetMaxAnimalsPerPlayer()
+        if maxAnimals > 0 then
+            local currentCount = AACS.CountPlayerAdoptions(username)
+            if currentCount >= maxAnimals then
+                canAdopt = false
+                blockReason = _t("IGUI_AACS_Require_Limit", currentCount, maxAnimals)
             end
         end
 
+        -- Check document requirement (client hint)
+        if canAdopt and AACS.RequiresDocument() then
+            if not AACS.PlayerHasDocument(playerObj) then
+                canAdopt = false
+                blockReason = getText("IGUI_AACS_Require_Document")
+            end
+        end
+
+        if type(animal) == "table" and animal.__aacsProxy then
+            AACS.Log("[OnFillMenu] Adicionando 'Adotar animal' (proxy) em: SUBMENU")
+            local adoptOpt = sub:addOption(getText("ContextMenu_AACS_AdoptAnimal"), worldObjects, _adoptAtXYZ, animal.x, animal.y, animal.z)
+
+            if not canAdopt then
+                adoptOpt.notAvailable = true
+                if blockReason then
+                    local tooltip = ISToolTip:new()
+                    tooltip:initialise()
+                    tooltip:setVisible(false)
+                    tooltip.description = blockReason
+                    adoptOpt.toolTip = tooltip
+                end
+            end
+
+            -- Vanilla animals sometimes don't expose the object reference on client.
+            if isClient() then
+                local rid = tostring(AACS.Now()) .. tostring(ZombRand(1000, 9999))
+                AACS.PendingMenu[rid] = { context = context, sub = sub, adoptOpt = adoptOpt }
+                sendClientCommand(getPlayer(), "AACS", "queryAnimalAt", {
+                    x = animal.x, y = animal.y, z = animal.z,
+                    name = animal.menuName,
+                    requestId = rid,
+                })
+            end
         else
-            -- No owner/UID => allow adopt (with new requirement checks)
-            -- [NEW] Client-side pre-checks for UI feedback (server still validates)
-            local canAdopt = true
-            local blockReason = nil
+            AACS.Log("[OnFillMenu] Adicionando 'Adotar animal' (direto) em: SUBMENU")
+            local adoptOpt = sub:addOption(getText("ContextMenu_AACS_AdoptAnimal"), worldObjects, _adoptAnimal, animal)
 
-            -- Check adoption limit (client hint)
-            local maxAnimals = AACS.GetMaxAnimalsPerPlayer()
-            if maxAnimals > 0 then
-                local currentCount = AACS.CountPlayerAdoptions(username)
-                if currentCount >= maxAnimals then
-                    canAdopt = false
-                    blockReason = _t("IGUI_AACS_Require_Limit", currentCount, maxAnimals)
-                end
-            end
-
-            -- Check document requirement (client hint)
-            if canAdopt and AACS.RequiresDocument() then
-                if not AACS.PlayerHasDocument(playerObj) then
-                    canAdopt = false
-                    blockReason = getText("IGUI_AACS_Require_Document")
-                end
-            end
-
-            if type(animal) == "table" and animal.__aacsProxy then
-                AACS.Log("[OnFillMenu] Adicionando 'Adotar animal' (proxy) em: SUBMENU")
-                local adoptOpt = sub:addOption(getText("ContextMenu_AACS_AdoptAnimal"), worldObjects, _adoptAtXYZ, animal.x, animal.y, animal.z)
-
-                if not canAdopt then
-                    adoptOpt.notAvailable = true
-                    if blockReason then
-                        local tooltip = ISToolTip:new()
-                        tooltip:initialise()
-                        tooltip:setVisible(false)
-                        tooltip.description = blockReason
-                        adoptOpt.toolTip = tooltip
-                    end
-                end
-
-                -- Vanilla animals sometimes don't expose the object reference on client.
-                if isClient() then
-                    local rid = tostring(AACS.Now()) .. tostring(ZombRand(1000, 9999))
-                    AACS.PendingMenu[rid] = { context = context, sub = sub, adoptOpt = adoptOpt }
-                    sendClientCommand(getPlayer(), "AACS", "queryAnimalAt", {
-                        x = animal.x, y = animal.y, z = animal.z,
-                        name = animal.menuName,
-                        requestId = rid,
-                    })
-                end
-            else
-                AACS.Log("[OnFillMenu] Adicionando 'Adotar animal' (direto) em: SUBMENU")
-                local adoptOpt = sub:addOption(getText("ContextMenu_AACS_AdoptAnimal"), worldObjects, _adoptAnimal, animal)
-
-                if not canAdopt then
-                    adoptOpt.notAvailable = true
-                    if blockReason then
-                        local tooltip = ISToolTip:new()
-                        tooltip:initialise()
-                        tooltip:setVisible(false)
-                        tooltip.description = blockReason
-                        adoptOpt.toolTip = tooltip
-                    end
+            if not canAdopt then
+                adoptOpt.notAvailable = true
+                if blockReason then
+                    local tooltip = ISToolTip:new()
+                    tooltip:initialise()
+                    tooltip:setVisible(false)
+                    tooltip.description = blockReason
+                    adoptOpt.toolTip = tooltip
                 end
             end
         end
-
-        ::continue::
-    end -- end for loop
+    end
 
     AACS.Log("[OnFillMenu] ===== FIM OnFillWorldObjectContextMenu =====")
 end
